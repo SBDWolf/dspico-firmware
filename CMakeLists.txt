@@ -54,6 +54,20 @@ add_executable(DSpico
   src/tinyusb/tusb_debug.h
   src/tinyusb/osal.h
   src/tinyusb/osal_none.h
+  src/tinyusb/tusb.h
+  src/tinyusb/tusb.c
+  src/tinyusb/tusb_private.h
+  src/tinyusb/tusb_fifo.h
+  src/tinyusb/tusb_fifo.c
+  src/tinyusb/usbd.h
+  src/tinyusb/usbd.c
+  src/tinyusb/usbd_control.c
+  src/tinyusb/usbd_pvt.h
+  src/tinyusb/cdc.h
+  src/tinyusb/cdc_device.h
+  src/tinyusb/cdc_device.c
+  src/usb_cdc_bridge.c
+  src/usb_cdc_bridge.h
   src/ntrCardSpiUart.c
   src/ntrCardSpiUart.h
   src/wrfuxxed.h

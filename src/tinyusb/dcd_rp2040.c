@@ -26,6 +26,7 @@
 
 #include "../common.h"
 #include "../usbEventQueue.h"
+#include "../usb_cdc_bridge.h"
 
 #include "tusb_option.h"
 
@@ -185,9 +186,13 @@ static void __tusb_irq_path_func(hw_handle_buff_status)(void) {
       // Continue xfer
       bool done = hw_endpoint_xfer_continue(ep);
       if (done) {
-        // Notify
-        usb_tryEnqueueEvent32Bit(USB_EVENT_XFER_COMPLETE | ep->ep_addr | (ep->xferred_len << 8));
-        // dcd_event_xfer_complete(0, ep->ep_addr, ep->xferred_len, XFER_RESULT_SUCCESS, true);
+        // Notify: local stack mode feeds the on-chip TinyUSB stack
+        // directly, legacy mode forwards the event to the NDS.
+        if (usb_cdc_local_stack_active()) {
+          dcd_event_xfer_complete(0, ep->ep_addr, ep->xferred_len, XFER_RESULT_SUCCESS, true);
+        } else {
+          usb_tryEnqueueEvent32Bit(USB_EVENT_XFER_COMPLETE | ep->ep_addr | (ep->xferred_len << 8));
+        }
         hw_endpoint_reset_transfer(ep);
       }
       remaining_buffers &= ~bit;
@@ -274,8 +279,11 @@ static void __tusb_irq_path_func(dcd_rp2040_irq)(void) {
     if (!keep_sof_alive && !_sof_enable) usb_hw_clear->inte = USB_INTS_DEV_SOF_BITS;
 
     
-    usb_tryEnqueueEvent32Bit(USB_EVENT_SOF | (usb_hw->sof_rd & USB_SOF_RD_BITS));
-    // dcd_event_sof(0, usb_hw->sof_rd & USB_SOF_RD_BITS, true);
+    if (usb_cdc_local_stack_active()) {
+      dcd_event_sof(0, usb_hw->sof_rd & USB_SOF_RD_BITS, true);
+    } else {
+      usb_tryEnqueueEvent32Bit(USB_EVENT_SOF | (usb_hw->sof_rd & USB_SOF_RD_BITS));
+    }
   }
 
   // xfer events are handled before setup req. So if a transfer completes immediately
@@ -293,10 +301,13 @@ static void __tusb_irq_path_func(dcd_rp2040_irq)(void) {
     reset_ep0();
 
     // Pass setup packet to tiny usb
-    usb_tryEnqueueEvent64Bit(
-        USB_EVENT_SETUP_RECEIVED | ((setup->wLength & 0x1FFF) << 16) | ((setup->bmRequestType_bit.direction) << 29) | setup->wIndex,
-        setup->wValue | (setup->bRequest << 16) | ((setup->bmRequestType & 0x7F) << 24));
-    // dcd_event_setup_received(0, setup, true);
+    if (usb_cdc_local_stack_active()) {
+      dcd_event_setup_received(0, (uint8_t const*) setup, true);
+    } else {
+      usb_tryEnqueueEvent64Bit(
+          USB_EVENT_SETUP_RECEIVED | ((setup->wLength & 0x1FFF) << 16) | ((setup->bmRequestType_bit.direction) << 29) | setup->wIndex,
+          setup->wValue | (setup->bRequest << 16) | ((setup->bmRequestType & 0x7F) << 24));
+    }
     usb_hw_clear->sie_status = USB_SIE_STATUS_SETUP_REC_BITS;
   }
 
@@ -313,8 +324,11 @@ static void __tusb_irq_path_func(dcd_rp2040_irq)(void) {
     }else
     {
       // Disconnected
-      usb_tryEnqueueEvent32Bit(USB_EVENT_UNPLUGGED);
-      // dcd_event_bus_signal(0, DCD_EVENT_UNPLUGGED, true);
+      if (usb_cdc_local_stack_active()) {
+        dcd_event_bus_signal(0, DCD_EVENT_UNPLUGGED, true);
+      } else {
+        usb_tryEnqueueEvent32Bit(USB_EVENT_UNPLUGGED);
+      }
     }
 
     usb_hw_clear->sie_status = USB_SIE_STATUS_CONNECTED_BITS;
@@ -329,8 +343,11 @@ static void __tusb_irq_path_func(dcd_rp2040_irq)(void) {
 
     usb_hw->dev_addr_ctrl = 0;
     reset_non_control_endpoints();
-    usb_tryEnqueueEvent32Bit(USB_EVENT_BUS_RESET);
-    // dcd_event_bus_reset(0, TUSB_SPEED_FULL, true);
+    if (usb_cdc_local_stack_active()) {
+      dcd_event_bus_reset(0, TUSB_SPEED_FULL, true);
+    } else {
+      usb_tryEnqueueEvent32Bit(USB_EVENT_BUS_RESET);
+    }
     usb_hw_clear->sie_status = USB_SIE_STATUS_BUS_RESET_BITS;
 
 #if TUD_OPT_RP2040_USB_DEVICE_ENUMERATION_FIX
@@ -349,15 +366,21 @@ static void __tusb_irq_path_func(dcd_rp2040_irq)(void) {
    */
   if (status & USB_INTS_DEV_SUSPEND_BITS) {
     handled |= USB_INTS_DEV_SUSPEND_BITS;
-    usb_tryEnqueueEvent32Bit(USB_EVENT_SUSPEND);
-    // dcd_event_bus_signal(0, DCD_EVENT_SUSPEND, true);
+    if (usb_cdc_local_stack_active()) {
+      dcd_event_bus_signal(0, DCD_EVENT_SUSPEND, true);
+    } else {
+      usb_tryEnqueueEvent32Bit(USB_EVENT_SUSPEND);
+    }
     usb_hw_clear->sie_status = USB_SIE_STATUS_SUSPENDED_BITS;
   }
 
   if (status & USB_INTS_DEV_RESUME_FROM_HOST_BITS) {
     handled |= USB_INTS_DEV_RESUME_FROM_HOST_BITS;
-    usb_tryEnqueueEvent32Bit(USB_EVENT_RESUME);
-    // dcd_event_bus_signal(0, DCD_EVENT_RESUME, true);
+    if (usb_cdc_local_stack_active()) {
+      dcd_event_bus_signal(0, DCD_EVENT_RESUME, true);
+    } else {
+      usb_tryEnqueueEvent32Bit(USB_EVENT_RESUME);
+    }
     usb_hw_clear->sie_status = USB_SIE_STATUS_RESUME_BITS;
   }
 

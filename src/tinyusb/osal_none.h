@@ -120,74 +120,74 @@ TU_ATTR_ALWAYS_INLINE static inline bool osal_mutex_unlock(osal_mutex_t mutex_hd
 //--------------------------------------------------------------------+
 // QUEUE API
 //--------------------------------------------------------------------+
-// #include "common/tusb_fifo.h"
+#include "tusb_fifo.h"
 
-// typedef struct {
-//   void (* interrupt_set)(bool);
-//   tu_fifo_t ff;
-// } osal_queue_def_t;
+typedef struct {
+  void (* interrupt_set)(bool);
+  tu_fifo_t ff;
+} osal_queue_def_t;
 
-// typedef osal_queue_def_t* osal_queue_t;
+typedef osal_queue_def_t* osal_queue_t;
 
-// // _int_set is used as mutex in OS NONE (disable/enable USB ISR)
-// #define OSAL_QUEUE_DEF(_int_set, _name, _depth, _type)    \
-//   uint8_t _name##_buf[_depth*sizeof(_type)];              \
-//   osal_queue_def_t _name = {                              \
-//     .interrupt_set = _int_set,                            \
-//     .ff = TU_FIFO_INIT(_name##_buf, _depth, _type, false) \
-//   }
+// _int_set is used as mutex in OS NONE (disable/enable USB ISR)
+#define OSAL_QUEUE_DEF(_int_set, _name, _depth, _type)    \
+  uint8_t _name##_buf[_depth*sizeof(_type)];              \
+  osal_queue_def_t _name = {                              \
+    .interrupt_set = _int_set,                            \
+    .ff = TU_FIFO_INIT(_name##_buf, _depth, _type, false) \
+  }
 
-// // lock queue by disable USB interrupt
-// TU_ATTR_ALWAYS_INLINE static inline void _osal_q_lock(osal_queue_t qhdl) {
-//   // disable dcd/hcd interrupt
-//   qhdl->interrupt_set(false);
-// }
+// lock queue by disable USB interrupt
+TU_ATTR_ALWAYS_INLINE static inline void _osal_q_lock(osal_queue_t qhdl) {
+  // disable dcd/hcd interrupt
+  qhdl->interrupt_set(false);
+}
 
-// // unlock queue
-// TU_ATTR_ALWAYS_INLINE static inline void _osal_q_unlock(osal_queue_t qhdl) {
-//   // enable dcd/hcd interrupt
-//   qhdl->interrupt_set(true);
-// }
+// unlock queue
+TU_ATTR_ALWAYS_INLINE static inline void _osal_q_unlock(osal_queue_t qhdl) {
+  // enable dcd/hcd interrupt
+  qhdl->interrupt_set(true);
+}
 
-// TU_ATTR_ALWAYS_INLINE static inline osal_queue_t osal_queue_create(osal_queue_def_t* qdef) {
-//   tu_fifo_clear(&qdef->ff);
-//   return (osal_queue_t) qdef;
-// }
+TU_ATTR_ALWAYS_INLINE static inline osal_queue_t osal_queue_create(osal_queue_def_t* qdef) {
+  tu_fifo_clear(&qdef->ff);
+  return (osal_queue_t) qdef;
+}
 
-// TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_delete(osal_queue_t qhdl) {
-//   (void) qhdl;
-//   return true; // nothing to do
-// }
+TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_delete(osal_queue_t qhdl) {
+  (void) qhdl;
+  return true; // nothing to do
+}
 
-// TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_receive(osal_queue_t qhdl, void* data, uint32_t msec) {
-//   (void) msec; // not used, always behave as msec = 0
+TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_receive(osal_queue_t qhdl, void* data, uint32_t msec) {
+  (void) msec; // not used, always behave as msec = 0
 
-//   _osal_q_lock(qhdl);
-//   bool success = tu_fifo_read(&qhdl->ff, data);
-//   _osal_q_unlock(qhdl);
+  _osal_q_lock(qhdl);
+  bool success = tu_fifo_read(&qhdl->ff, data);
+  _osal_q_unlock(qhdl);
 
-//   return success;
-// }
+  return success;
+}
 
-// TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_send(osal_queue_t qhdl, void const* data, bool in_isr) {
-//   if (!in_isr) {
-//     _osal_q_lock(qhdl);
-//   }
+TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_send(osal_queue_t qhdl, void const* data, bool in_isr) {
+  if (!in_isr) {
+    _osal_q_lock(qhdl);
+  }
 
-//   bool success = tu_fifo_write(&qhdl->ff, data);
+  bool success = tu_fifo_write(&qhdl->ff, data);
 
-//   if (!in_isr) {
-//     _osal_q_unlock(qhdl);
-//   }
+  if (!in_isr) {
+    _osal_q_unlock(qhdl);
+  }
 
-//   return success;
-// }
+  return success;
+}
 
-// TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_empty(osal_queue_t qhdl) {
-//   // Skip queue lock/unlock since this function is primarily called
-//   // with interrupt disabled before going into low power mode
-//   return tu_fifo_empty(&qhdl->ff);
-// }
+TU_ATTR_ALWAYS_INLINE static inline bool osal_queue_empty(osal_queue_t qhdl) {
+  // Skip queue lock/unlock since this function is primarily called
+  // with interrupt disabled before going into low power mode
+  return tu_fifo_empty(&qhdl->ff);
+}
 
 #ifdef __cplusplus
 }

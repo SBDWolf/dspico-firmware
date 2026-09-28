@@ -6,6 +6,13 @@
 #include "usbEventQueue.h"
 #include "powerSaving.h"
 #include "ntrCardRomGameUsb.h"
+#include "usb_cdc_bridge.h"
+
+// dcd_rp2040.c defines dcd_edpt_close() unconditionally, but the vendor
+// dcd.h only declares it when TUP_DCD_EDPT_ISO_ALLOC is unset (it IS set
+// for RP2040, which declares the ISO alloc/activate pair instead). The
+// legacy USB_SUB_COMMAND_EP_CLOSE path below still needs this call.
+extern "C" void dcd_edpt_close(uint8_t rhport, uint8_t ep_addr);
 
 static u8 sUsbDataBuffers[32][1024] alignas(4);
 static bool sUsbActive;
@@ -123,6 +130,21 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReqUsbCommandCmd1(ntr_rom_emu_t* ro
             dcd_int_disable(0);
             break;
         }
+        case USB_SUB_COMMAND_LOCAL_STACK:
+        {
+            // PMDSky uplink: run the TinyUSB device stack locally on the
+            // RP2040 (usb_cdc_bridge.c) instead of forwarding USB events
+            // to the NDS over the card bus.
+            pwr_disableUsbPowerSaving();
+            usb_cdc_local_stack_start();
+            sUsbActive = true;
+            break;
+        }
+        case USB_SUB_COMMAND_LOCAL_STACK_OFF:
+        {
+            usb_cdc_local_stack_stop();
+            break;
+        }
     }
 }
 
@@ -132,6 +154,19 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReadUsbDataCmd0(ntr_rom_emu_t* romE
     u32 bufferIndex = romEmu->cmd0 & 1;
     u32 endpoint = (romEmu->cmd0 >> 8) & 0xFF;
     u8* buffer = &sUsbDataBuffers[(endpoint & ~0x80) * 2 + (endpoint >> 7)][bufferIndex * 512];
+    if (usb_cdc_local_stack_active())
+    {
+        // PMDSky uplink: endpoint selects the block content
+        // (0 = status block, anything else = CDC RX data)
+        if (endpoint == 0)
+        {
+            usb_cdc_bridge_read_status(buffer);
+        }
+        else
+        {
+            usb_cdc_bridge_read_rx(buffer);
+        }
+    }
     ntrc_dmaToBus(buffer, 512);
     ntrc_finishGameNoScrambleCmd0(romEmu);
 }
@@ -158,7 +193,16 @@ static void __scratch_y("cpu0") usbWritePayloadComplete(ntr_rom_emu_t* romEmu)
         {
             byteCount = 512;
         }
-        dcd_edpt_xfer(0, endpoint, buffer, byteCount);
+        if (usb_cdc_local_stack_active())
+        {
+            // PMDSky uplink: feed the CDC TX ring; the firmware pumps it
+            // to the host independently of the NDS frame timing.
+            usb_cdc_bridge_tx_append(buffer, byteCount);
+        }
+        else
+        {
+            dcd_edpt_xfer(0, endpoint, buffer, byteCount);
+        }
     }
 }
 
@@ -171,7 +215,10 @@ extern "C" void __scratch_y("cpu0") ntrc_gameWriteUsbDataCmd1(ntr_rom_emu_t* rom
     {
         ntrc_noPayload(pio);
         ntrc_finishGameNoScrambleCmd1(romEmu);
-        dcd_edpt_xfer(0, endpoint, buffer, 0);
+        if (!usb_cdc_local_stack_active())
+        {
+            dcd_edpt_xfer(0, endpoint, buffer, 0);
+        }
     }
     else
     {
@@ -197,6 +244,7 @@ extern "C" void ntrc_resetUsb(void)
 {
     if (sUsbActive)
     {
+        usb_cdc_local_stack_stop();
         dcd_disconnect(0);
         dcd_int_disable(0);
         usb_hw->main_ctrl = USB_MAIN_CTRL_CONTROLLER_EN_RESET;

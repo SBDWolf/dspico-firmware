@@ -29,7 +29,7 @@
 
 #include "tusb_common.h"
 #include "osal.h"
-// #include "common/tusb_fifo.h"
+#include "tusb_fifo.h"
 
 #ifdef __cplusplus
  extern "C" {
@@ -93,15 +93,15 @@ typedef struct TU_ATTR_ALIGNED(4) {
 
 // clean/flush data cache: write cache -> memory.
 // Required before an DMA TX transfer to make sure data is in memory
-void dcd_dcache_clean(void const* addr, uint32_t data_size) TU_ATTR_WEAK;
+bool dcd_dcache_clean(const void* addr, uint32_t data_size);
 
 // invalidate data cache: mark cache as invalid, next read will read from memory
 // Required BOTH before and after an DMA RX transfer
-void dcd_dcache_invalidate(void const* addr, uint32_t data_size) TU_ATTR_WEAK;
+bool dcd_dcache_invalidate(const void* addr, uint32_t data_size);
 
 // clean and invalidate data cache
 // Required before an DMA transfer where memory is both read/write by DMA
-void dcd_dcache_clean_invalidate(void const* addr, uint32_t data_size) TU_ATTR_WEAK;
+bool dcd_dcache_clean_invalidate(const void* addr, uint32_t data_size);
 
 //--------------------------------------------------------------------+
 // Controller API
@@ -162,7 +162,7 @@ bool dcd_edpt_xfer            (uint8_t rhport, uint8_t ep_addr, uint8_t * buffer
 
 // Submit an transfer using fifo, When complete dcd_event_xfer_complete() is invoked to notify the stack
 // This API is optional, may be useful for register-based for transferring data.
-// bool dcd_edpt_xfer_fifo       (uint8_t rhport, uint8_t ep_addr, tu_fifo_t * ff, uint16_t total_bytes) TU_ATTR_WEAK;
+bool dcd_edpt_xfer_fifo       (uint8_t rhport, uint8_t ep_addr, tu_fifo_t * ff, uint16_t total_bytes) TU_ATTR_WEAK;
 
 // Stall endpoint, any queuing transfer should be removed from endpoint
 void dcd_edpt_stall           (uint8_t rhport, uint8_t ep_addr);

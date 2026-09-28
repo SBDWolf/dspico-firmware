@@ -6,7 +6,12 @@ static usb_event_queue_t sUsbEventQueue;
 
 static void setCartridgeIrqState(bool asserted)
 {
-    gpio_put(PIN_IRQ, asserted);
+    // Do NOT drive the NDS card IRQ pin (GPIO20). A running game owns that
+    // line; stock firmware asserts it to wake LNH example apps, which is
+    // incompatible with running PMD alongside the DSpico and corrupts the
+    // game's IRQ-driven card I/O (spurious card IRQ -> false "card removed").
+    // The event queue still enqueues/dequeues normally; we just stop asserting.
+    (void)asserted;
 }
 
 void usb_clearEventQueue(void)

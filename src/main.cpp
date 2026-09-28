@@ -19,6 +19,7 @@
 #include "pico/bootrom.h"
 #include "hardware/xosc.h"
 #include "powerSaving.h"
+#include "usb_cdc_bridge.h"
 
 static u32 sProgramOffset;
 FATFS sFatFs;
@@ -367,6 +368,7 @@ int __time_critical_func(main)()
     #ifdef ENABLE_R4_MODE
         ntrc_gameR4Update();
     #endif
+        usb_cdc_task();
         __wfi();
     }
 }

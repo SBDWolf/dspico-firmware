@@ -92,13 +92,23 @@
 
 //------------- CLASS -------------//
 #define CFG_TUD_HID               0
-#define CFG_TUD_CDC               0
+#define CFG_TUD_CDC               1
 #define CFG_TUD_MSC               0
 #define CFG_TUD_MIDI              0
 #define CFG_TUD_VENDOR            0
 
 // HID buffer size Should be sufficient to hold ID (if any) + Data
 #define CFG_TUD_HID_EP_BUFSIZE    16
+
+//------------- CDC -------------//
+// EP0 + CDC: data OUT (EP1), data IN (EP2), notification IN (EP3)
+#define CFG_TUD_MAX_ENDPOINTS     4
+// EP_BUFSIZE sizes the endpoint DMA buffers; RX/TX_BUFSIZE size the CDC
+// class FIFOs. The TX FIFO is sized to hold a full 512-byte NDS uplink
+// block so the TX ring (usb_cdc_bridge.c) can hand over whole blocks.
+#define CFG_TUD_CDC_EP_BUFSIZE    64
+#define CFG_TUD_CDC_RX_BUFSIZE    512
+#define CFG_TUD_CDC_TX_BUFSIZE    512
 
 #ifdef __cplusplus
  }
