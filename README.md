@@ -1,4 +1,8 @@
 # DSpico Firmware
+This is a fork of the DSPico firmware to enable USB communication for transmission of memory addresses within Pokémon Mystery Dungeon: Explorers of Sky. It likely breaks the functionality of some existing USB application. The changes are entirely vibe-coded. Below is the original ReadMe.
+
+------------------
+
 This is the repository for the DSpico firmware. The firmware emulates a DS cartridge, with extended features for SD access and USB. PIO is used for an SDIO interface for the SD card and for interfacing the DS cartridge bus.
 
 For an overview of the supported card commands, see [commands.md](docs/commands.md).
