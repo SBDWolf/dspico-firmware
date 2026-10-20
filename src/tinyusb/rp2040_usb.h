@@ -10,6 +10,7 @@
 #include "pico.h"
 #include "hardware/structs/usb.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/resets.h"
 #include "hardware/timer.h"
 
@@ -36,59 +37,63 @@
 #define __tusb_irq_path_func(x) x
 #endif
 
-#define usb_hw_set    ((usb_hw_t *) hw_set_alias_untyped(usb_hw))
-#define usb_hw_clear  ((usb_hw_t *) hw_clear_alias_untyped(usb_hw))
+#define usb_hw_set ((usb_hw_t *)hw_set_alias_untyped(usb_hw))
+#define usb_hw_clear ((usb_hw_t *)hw_clear_alias_untyped(usb_hw))
 
-#define pico_info(...)  TU_LOG(2, __VA_ARGS__)
+#define pico_info(...) TU_LOG(2, __VA_ARGS__)
 #define pico_trace(...) TU_LOG(3, __VA_ARGS__)
 
 // Hardware information per endpoint
 typedef struct hw_endpoint
 {
-    // Is this a valid struct
-    bool configured;
+  // Is this a valid struct
+  bool configured;
 
-    // Transfer direction (i.e. IN is rx for host but tx for device)
-    // allows us to common up transfer functions
-    bool rx;
+  // Transfer direction (i.e. IN is rx for host but tx for device)
+  // allows us to common up transfer functions
+  bool rx;
 
-    uint8_t ep_addr;
-    uint8_t next_pid;
+  uint8_t ep_addr;
+  uint8_t next_pid;
 
-    // Endpoint control register
-    io_rw_32 *endpoint_control;
+  // Endpoint control register
+  io_rw_32 *endpoint_control;
 
-    // Buffer control register
-    io_rw_32 *buffer_control;
+  // Buffer control register
+  io_rw_32 *buffer_control;
 
-    // Buffer pointer in usb dpram
-    uint8_t *hw_data_buf;
+  // Buffer pointer in usb dpram
+  uint8_t *hw_data_buf;
 
-    // User buffer in main memory
-    uint8_t *user_buf;
+  // User buffer in main memory
+  uint8_t *user_buf;
 
-    // Current transfer information
-    uint16_t remaining_len;
-    uint16_t xferred_len;
+  // Current transfer information
+  uint16_t remaining_len;
+  uint16_t xferred_len;
 
-    // Data needed from EP descriptor
-    uint16_t wMaxPacketSize;
+  // Data needed from EP descriptor
+  uint16_t wMaxPacketSize;
 
-    // Endpoint is in use
-    bool active;
+  // Endpoint is in use
+  bool active;
 
-    // Interrupt, bulk, etc
-    uint8_t transfer_type;
+  // Interrupt, bulk, etc
+  uint8_t transfer_type;
 
-    // Transfer scheduled but not active
-    uint8_t pending;
+  // Transfer scheduled but not active
+  uint8_t pending;
+
+  // DSpico: saved PRIMASK for hw_endpoint_lock_update's critical
+  // section. Per-endpoint so nested/preempting locks restore correctly.
+  uint32_t irq_save;
 
 #if CFG_TUH_ENABLED
-    // Only needed for host
-    uint8_t dev_addr;
+  // Only needed for host
+  uint8_t dev_addr;
 
-    // If interrupt endpoint
-    uint8_t interrupt_num;
+  // If interrupt endpoint
+  uint8_t interrupt_num;
 #endif
 
 } hw_endpoint_t;
@@ -104,38 +109,55 @@ bool hw_endpoint_xfer_continue(struct hw_endpoint *ep);
 void hw_endpoint_reset_transfer(struct hw_endpoint *ep);
 void hw_endpoint_start_next_buffer(struct hw_endpoint *ep);
 
-TU_ATTR_ALWAYS_INLINE static inline void hw_endpoint_lock_update(__unused struct hw_endpoint * ep, __unused int delta) {
-  // todo add critsec as necessary to prevent issues between worker and IRQ...
-  //  note that this is perhaps as simple as disabling IRQs because it would make
-  //  sense to have worker and IRQ on same core, however I think using critsec is about equivalent.
+TU_ATTR_ALWAYS_INLINE static inline void hw_endpoint_lock_update(struct hw_endpoint *ep, int delta)
+{
+  // DSpico: real critical section. Upstream leaves this as a "todo" no-op,
+  // but the worker (task context AND the card PIO IRQ, which runs at a
+  // higher NVIC priority than the USB IRQ) and the USB IRQ handler share
+  // the hw_endpoint state and the buffer-control registers. Without this,
+  // a preempted transfer-continue can have its live transfer wiped by the
+  // other context: lost EP0 arms (host sees control timeouts -> "A device
+  // attached to the system is not functioning") and "Can't continue xfer
+  // on inactive ep" panics (CPU0 death -> card bus dead). USB runs on one
+  // core only, so masking interrupts is complete mutual exclusion; the
+  // sections are sub-microsecond. The saved PRIMASK lives in the endpoint
+  // so nesting restores correctly.
+  if (delta > 0)
+  {
+    ep->irq_save = save_and_disable_interrupts();
+  }
+  else if (delta < 0)
+  {
+    restore_interrupts(ep->irq_save);
+  }
 }
 
 void _hw_endpoint_buffer_control_update32(struct hw_endpoint *ep, uint32_t and_mask, uint32_t or_mask);
 
-TU_ATTR_ALWAYS_INLINE static inline uint32_t _hw_endpoint_buffer_control_get_value32 (struct hw_endpoint *ep)
+TU_ATTR_ALWAYS_INLINE static inline uint32_t _hw_endpoint_buffer_control_get_value32(struct hw_endpoint *ep)
 {
   return *ep->buffer_control;
 }
 
-TU_ATTR_ALWAYS_INLINE static inline void _hw_endpoint_buffer_control_set_value32 (struct hw_endpoint *ep, uint32_t value)
+TU_ATTR_ALWAYS_INLINE static inline void _hw_endpoint_buffer_control_set_value32(struct hw_endpoint *ep, uint32_t value)
 {
   _hw_endpoint_buffer_control_update32(ep, 0, value);
 }
 
-TU_ATTR_ALWAYS_INLINE static inline void _hw_endpoint_buffer_control_set_mask32 (struct hw_endpoint *ep, uint32_t value)
+TU_ATTR_ALWAYS_INLINE static inline void _hw_endpoint_buffer_control_set_mask32(struct hw_endpoint *ep, uint32_t value)
 {
   _hw_endpoint_buffer_control_update32(ep, ~value, value);
 }
 
-TU_ATTR_ALWAYS_INLINE static inline void _hw_endpoint_buffer_control_clear_mask32 (struct hw_endpoint *ep, uint32_t value)
+TU_ATTR_ALWAYS_INLINE static inline void _hw_endpoint_buffer_control_clear_mask32(struct hw_endpoint *ep, uint32_t value)
 {
   _hw_endpoint_buffer_control_update32(ep, ~value, 0);
 }
 
-static inline uintptr_t hw_data_offset (uint8_t *buf)
+static inline uintptr_t hw_data_offset(uint8_t *buf)
 {
   // Remove usb base from buffer pointer
-  return (uintptr_t) buf ^ (uintptr_t) usb_dpram;
+  return (uintptr_t)buf ^ (uintptr_t)usb_dpram;
 }
 
 extern const char *ep_dir_string[];

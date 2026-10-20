@@ -4,16 +4,27 @@
 #include "powerSaving.h"
 #include "ntrCardRomGameNoScramble.h"
 
+u32 gCardResyncCount;
+
 void ntrc_gameNoScrambleCmd1Unknown(ntr_rom_emu_t* romEmu, u32 word, pio_hw_t* pio)
 {
     ntrc_noPayload(pio);
     ntrc_finishGameNoScrambleCmd1(romEmu);
 
-    //do not receive further commands until card reset
-    irq_set_enabled(PIO0_IRQ_0, false);
-
-    puts("Unknown game command");
-    printf("%08X%08X\n", romEmu->cmd0, romEmu->cmd1);
+    // DSpico: a desynced card stream (a soft reset cutting a transaction
+    // mid-flight, then garbage data words landing in command phase) shows
+    // up here as an unknown command. Upstream disabled the card IRQ until
+    // the next card reset — but a PMDSky soft reset never toggles PIN_RST,
+    // so that meant the card bus stayed dead forever (game freeze). The
+    // transaction above is completed cleanly (no payload, wordIdx reset),
+    // so just clear any stale payload state, count the resync, and keep
+    // going: the game's next command re-syncs the bus. (No puts/printf
+    // here: this runs in the PIO IRQ, and a ~1 ms UART write lets the
+    // PIO RX FIFO overflow and desync the stream further.)
+    romEmu->readDataDestination = 0;
+    romEmu->readDataLimit = 0;
+    romEmu->readDataCompleteHandler = 0;
+    gCardResyncCount++;
 }
 
 void __time_critical_func(ntrc_gameNoScrambleCmd0Dummy)(ntr_rom_emu_t* romEmu, u32 word, pio_hw_t* pio)

@@ -21,5 +21,9 @@ enum
     USB_SUB_COMMAND_INTERRUPT_ENABLE = 17,
     USB_SUB_COMMAND_INTERRUPT_DISABLE = 18,
     USB_SUB_COMMAND_LOCAL_STACK = 19,
-    USB_SUB_COMMAND_LOCAL_STACK_OFF = 20
+    USB_SUB_COMMAND_LOCAL_STACK_OFF = 20,
+    // DSpico: clear stale card-emulator state (in-flight DMA + transaction
+    // state) left behind when a console soft reset cut a transaction
+    // mid-flight. The PMDSky mod sends it right after LOCAL_STACK on boot.
+    USB_SUB_COMMAND_RESET_CARD_STATE = 21
 };

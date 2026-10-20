@@ -104,6 +104,12 @@ extern ntr_rom_emu_t gNtrRomEmu;
 extern "C" {
 #endif
 
+// DSpico: counts unknown-command resyncs (a desynced card stream — e.g. a
+// soft reset cutting a transaction mid-flight — presenting garbage as a
+// command pair). Diagnostic only; the handlers self-heal and keep the
+// card IRQ running.
+extern u32 gCardResyncCount;
+
 void ntrc_pioIrq(void);
 
 /// @brief Switches the rom emulator to normal mode.

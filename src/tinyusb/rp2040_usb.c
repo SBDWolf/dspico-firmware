@@ -35,18 +35,19 @@
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTOTYPE
 //--------------------------------------------------------------------+
-static void _hw_endpoint_xfer_sync(struct hw_endpoint* ep);
+static void _hw_endpoint_xfer_sync(struct hw_endpoint *ep);
 
 #if TUD_OPT_RP2040_USB_DEVICE_UFRAME_FIX
-  static bool e15_is_bulkin_ep(struct hw_endpoint* ep);
-  static bool e15_is_critical_frame_period(struct hw_endpoint* ep);
+static bool e15_is_bulkin_ep(struct hw_endpoint *ep);
+static bool e15_is_critical_frame_period(struct hw_endpoint *ep);
 #else
-  #define e15_is_bulkin_ep(x)             (false)
-  #define e15_is_critical_frame_period(x) (false)
+#define e15_is_bulkin_ep(x) (false)
+#define e15_is_critical_frame_period(x) (false)
 #endif
 
 // if usb hardware is in host mode
-TU_ATTR_ALWAYS_INLINE static inline bool is_host_mode(void) {
+TU_ATTR_ALWAYS_INLINE static inline bool is_host_mode(void)
+{
   return (usb_hw->main_ctrl & USB_MAIN_CTRL_HOST_NDEVICE_BITS) ? true : false;
 }
 
@@ -54,15 +55,18 @@ TU_ATTR_ALWAYS_INLINE static inline bool is_host_mode(void) {
 // Implementation
 //--------------------------------------------------------------------+
 // Provide own byte by byte memcpy as not all copies are aligned
-static void unaligned_memcpy(void *dst, const void *src, size_t n) {
-  uint8_t *dst_byte = (uint8_t*)dst;
-  const uint8_t *src_byte = (const uint8_t*)src;
-  while (n--) {
+static void unaligned_memcpy(void *dst, const void *src, size_t n)
+{
+  uint8_t *dst_byte = (uint8_t *)dst;
+  const uint8_t *src_byte = (const uint8_t *)src;
+  while (n--)
+  {
     *dst_byte++ = *src_byte++;
   }
 }
 
-void rp2040_usb_init(void) {
+void rp2040_usb_init(void)
+{
   // Reset usb controller
   reset_block(RESETS_RESET_USBCTRL_BITS);
   unreset_block_wait(RESETS_RESET_USBCTRL_BITS);
@@ -86,31 +90,38 @@ void rp2040_usb_init(void) {
   TU_LOG2_INT(sizeof(hw_endpoint_t));
 }
 
-void __tusb_irq_path_func(hw_endpoint_reset_transfer)(struct hw_endpoint* ep) {
+void __tusb_irq_path_func(hw_endpoint_reset_transfer)(struct hw_endpoint *ep)
+{
   ep->active = false;
   ep->remaining_len = 0;
   ep->xferred_len = 0;
   ep->user_buf = 0;
 }
 
-void __tusb_irq_path_func(_hw_endpoint_buffer_control_update32)(struct hw_endpoint* ep, uint32_t and_mask,
-                                                               uint32_t or_mask) {
+void __tusb_irq_path_func(_hw_endpoint_buffer_control_update32)(struct hw_endpoint *ep, uint32_t and_mask,
+                                                                uint32_t or_mask)
+{
   uint32_t value = 0;
 
-  if (and_mask) {
+  if (and_mask)
+  {
     value = *ep->buffer_control & and_mask;
   }
 
-  if (or_mask) {
+  if (or_mask)
+  {
     value |= or_mask;
-    if (or_mask & USB_BUF_CTRL_AVAIL) {
-      if (*ep->buffer_control & USB_BUF_CTRL_AVAIL) {
+    if (or_mask & USB_BUF_CTRL_AVAIL)
+    {
+      if (*ep->buffer_control & USB_BUF_CTRL_AVAIL)
+      {
         panic("ep %02X was already available", ep->ep_addr);
       }
       *ep->buffer_control = value & ~USB_BUF_CTRL_AVAIL;
       // 4.1.2.5.1 Con-current access: 12 cycles (should be good for 48*12Mhz = 576Mhz) after write to buffer control
       // Don't need delay in host mode as host is in charge
-      if ( !is_host_mode()) {
+      if (!is_host_mode())
+      {
         busy_wait_at_least_cycles(12);
       }
     }
@@ -120,9 +131,10 @@ void __tusb_irq_path_func(_hw_endpoint_buffer_control_update32)(struct hw_endpoi
 }
 
 // prepare buffer, return buffer control
-static uint32_t __tusb_irq_path_func(prepare_ep_buffer)(struct hw_endpoint* ep, uint8_t buf_id) {
+static uint32_t __tusb_irq_path_func(prepare_ep_buffer)(struct hw_endpoint *ep, uint8_t buf_id)
+{
   uint16_t const buflen = tu_min16(ep->remaining_len, ep->wMaxPacketSize);
-  ep->remaining_len = (uint16_t) (ep->remaining_len - buflen);
+  ep->remaining_len = (uint16_t)(ep->remaining_len - buflen);
 
   uint32_t buf_ctrl = buflen | USB_BUF_CTRL_AVAIL;
 
@@ -130,7 +142,8 @@ static uint32_t __tusb_irq_path_func(prepare_ep_buffer)(struct hw_endpoint* ep, 
   buf_ctrl |= ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID;
   ep->next_pid ^= 1u;
 
-  if (!ep->rx) {
+  if (!ep->rx)
+  {
     // Copy data from user buffer to hw buffer
     unaligned_memcpy(ep->hw_data_buf + buf_id * 64, ep->user_buf, buflen);
     ep->user_buf += buflen;
@@ -142,17 +155,20 @@ static uint32_t __tusb_irq_path_func(prepare_ep_buffer)(struct hw_endpoint* ep, 
   // Is this the last buffer? Only really matters for host mode. Will trigger
   // the trans complete irq but also stop it polling. We only really care about
   // trans complete for setup packets being sent
-  if (ep->remaining_len == 0) {
+  if (ep->remaining_len == 0)
+  {
     buf_ctrl |= USB_BUF_CTRL_LAST;
   }
 
-  if (buf_id) buf_ctrl = buf_ctrl << 16;
+  if (buf_id)
+    buf_ctrl = buf_ctrl << 16;
 
   return buf_ctrl;
 }
 
 // Prepare buffer control register value
-void __tusb_irq_path_func(hw_endpoint_start_next_buffer)(struct hw_endpoint* ep) {
+void __tusb_irq_path_func(hw_endpoint_start_next_buffer)(struct hw_endpoint *ep)
+{
   uint32_t ep_ctrl = *ep->endpoint_control;
 
   // always compute and start with buffer 0
@@ -167,7 +183,8 @@ void __tusb_irq_path_func(hw_endpoint_start_next_buffer)(struct hw_endpoint* ep)
   bool const force_single = (!is_host && !tu_edpt_dir(ep->ep_addr)) ||
                             (is_host && tu_edpt_number(ep->ep_addr) != 0);
 
-  if (ep->remaining_len && !force_single) {
+  if (ep->remaining_len && !force_single)
+  {
     // Use buffer 1 (double buffered) if there is still data
     // TODO: Isochronous for buffer1 bit-field is different than CBI (control bulk, interrupt)
 
@@ -176,7 +193,9 @@ void __tusb_irq_path_func(hw_endpoint_start_next_buffer)(struct hw_endpoint* ep)
     // Set endpoint control double buffered bit if needed
     ep_ctrl &= ~EP_CTRL_INTERRUPT_PER_BUFFER;
     ep_ctrl |= EP_CTRL_DOUBLE_BUFFERED_BITS | EP_CTRL_INTERRUPT_PER_DOUBLE_BUFFER;
-  } else {
+  }
+  else
+  {
     // Single buffered since 1 is enough
     ep_ctrl &= ~(EP_CTRL_DOUBLE_BUFFERED_BITS | EP_CTRL_INTERRUPT_PER_DOUBLE_BUFFER);
     ep_ctrl |= EP_CTRL_INTERRUPT_PER_BUFFER;
@@ -191,10 +210,12 @@ void __tusb_irq_path_func(hw_endpoint_start_next_buffer)(struct hw_endpoint* ep)
   _hw_endpoint_buffer_control_set_value32(ep, buf_ctrl);
 }
 
-void hw_endpoint_xfer_start(struct hw_endpoint* ep, uint8_t* buffer, uint16_t total_len) {
+void hw_endpoint_xfer_start(struct hw_endpoint *ep, uint8_t *buffer, uint16_t total_len)
+{
   hw_endpoint_lock_update(ep, 1);
 
-  if (ep->active) {
+  if (ep->active)
+  {
     // TODO: Is this acceptable for interrupt packets?
     TU_LOG(1, "WARN: starting new transfer on already active ep %02X\r\n", ep->ep_addr);
     hw_endpoint_reset_transfer(ep);
@@ -206,13 +227,17 @@ void hw_endpoint_xfer_start(struct hw_endpoint* ep, uint8_t* buffer, uint16_t to
   ep->active = true;
   ep->user_buf = buffer;
 
-  if (e15_is_bulkin_ep(ep)) {
+  if (e15_is_bulkin_ep(ep))
+  {
     usb_hw_set->inte = USB_INTS_DEV_SOF_BITS;
   }
 
-  if (e15_is_critical_frame_period(ep)) {
+  if (e15_is_critical_frame_period(ep))
+  {
     ep->pending = 1;
-  } else {
+  }
+  else
+  {
     hw_endpoint_start_next_buffer(ep);
   }
 
@@ -220,30 +245,36 @@ void hw_endpoint_xfer_start(struct hw_endpoint* ep, uint8_t* buffer, uint16_t to
 }
 
 // sync endpoint buffer and return transferred bytes
-static uint16_t __tusb_irq_path_func(sync_ep_buffer)(struct hw_endpoint* ep, uint8_t buf_id) {
+static uint16_t __tusb_irq_path_func(sync_ep_buffer)(struct hw_endpoint *ep, uint8_t buf_id)
+{
   uint32_t buf_ctrl = _hw_endpoint_buffer_control_get_value32(ep);
-  if (buf_id) buf_ctrl = buf_ctrl >> 16;
+  if (buf_id)
+    buf_ctrl = buf_ctrl >> 16;
 
   uint16_t xferred_bytes = buf_ctrl & USB_BUF_CTRL_LEN_MASK;
 
-  if (!ep->rx) {
+  if (!ep->rx)
+  {
     // We are continuing a transfer here. If we are TX, we have successfully
     // sent some data can increase the length we have sent
     assert(!(buf_ctrl & USB_BUF_CTRL_FULL));
 
-    ep->xferred_len = (uint16_t) (ep->xferred_len + xferred_bytes);
-  } else {
+    ep->xferred_len = (uint16_t)(ep->xferred_len + xferred_bytes);
+  }
+  else
+  {
     // If we have received some data, so can increase the length
     // we have received AFTER we have copied it to the user buffer at the appropriate offset
     assert(buf_ctrl & USB_BUF_CTRL_FULL);
 
     unaligned_memcpy(ep->user_buf, ep->hw_data_buf + buf_id * 64, xferred_bytes);
-    ep->xferred_len = (uint16_t) (ep->xferred_len + xferred_bytes);
+    ep->xferred_len = (uint16_t)(ep->xferred_len + xferred_bytes);
     ep->user_buf += xferred_bytes;
   }
 
   // Short packet
-  if (xferred_bytes < ep->wMaxPacketSize) {
+  if (xferred_bytes < ep->wMaxPacketSize)
+  {
     pico_trace("  Short packet on buffer %d with %u bytes\r\n", buf_id, xferred_bytes);
     // Reduce total length as this is last packet
     ep->remaining_len = 0;
@@ -252,7 +283,8 @@ static uint16_t __tusb_irq_path_func(sync_ep_buffer)(struct hw_endpoint* ep, uin
   return xferred_bytes;
 }
 
-static void __tusb_irq_path_func(_hw_endpoint_xfer_sync)(struct hw_endpoint* ep) {
+static void __tusb_irq_path_func(_hw_endpoint_xfer_sync)(struct hw_endpoint *ep)
+{
   // Update hw endpoint struct with info from hardware
   // after a buff status interrupt
 
@@ -263,11 +295,15 @@ static void __tusb_irq_path_func(_hw_endpoint_xfer_sync)(struct hw_endpoint* ep)
   uint16_t buf0_bytes = sync_ep_buffer(ep, 0);
 
   // sync buffer 1 if double buffered
-  if ((*ep->endpoint_control) & EP_CTRL_DOUBLE_BUFFERED_BITS) {
-    if (buf0_bytes == ep->wMaxPacketSize) {
+  if ((*ep->endpoint_control) & EP_CTRL_DOUBLE_BUFFERED_BITS)
+  {
+    if (buf0_bytes == ep->wMaxPacketSize)
+    {
       // sync buffer 1 if not short packet
       sync_ep_buffer(ep, 1);
-    } else {
+    }
+    else
+    {
       // short packet on buffer 0
       // TODO couldn't figure out how to handle this case which happen with net_lwip_webserver example
       // At this time (currently trigger per 2 buffer), the buffer1 is probably filled with data from
@@ -298,13 +334,27 @@ static void __tusb_irq_path_func(_hw_endpoint_xfer_sync)(struct hw_endpoint* ep)
   }
 }
 
+// DSpico: diagnostics counter — how many times the "inactive ep" state
+// race was hit and defused instead of panicking (upstream kills CPU0 here,
+// which takes the card bus down with it).
+uint32_t ds_ep_state_fix;
+
 // Returns true if transfer is complete
-bool __tusb_irq_path_func(hw_endpoint_xfer_continue)(struct hw_endpoint* ep) {
+bool __tusb_irq_path_func(hw_endpoint_xfer_continue)(struct hw_endpoint *ep)
+{
   hw_endpoint_lock_update(ep, 1);
 
   // Part way through a transfer
-  if (!ep->active) {
-    panic("Can't continue xfer on inactive ep %02X", ep->ep_addr);
+  if (!ep->active)
+  {
+    // DSpico: a task/IRQ interleaving lost this endpoint's transfer state.
+    // With the lock above this should be unreachable; if the state was
+    // clobbered before the lock was taken, reset the transfer and report
+    // a 0-length completion so the stack recovers instead of dying.
+    ds_ep_state_fix++;
+    hw_endpoint_reset_transfer(ep);
+    hw_endpoint_lock_update(ep, -1);
+    return true;
   }
 
   // Update EP struct from hardware state
@@ -312,15 +362,21 @@ bool __tusb_irq_path_func(hw_endpoint_xfer_continue)(struct hw_endpoint* ep) {
 
   // Now we have synced our state with the hardware. Is there more data to transfer?
   // If we are done then notify tinyusb
-  if (ep->remaining_len == 0) {
+  if (ep->remaining_len == 0)
+  {
     pico_trace("Completed transfer of %d bytes on ep %02X\r\n", ep->xferred_len, ep->ep_addr);
     // Notify caller we are done so it can notify the tinyusb stack
     hw_endpoint_lock_update(ep, -1);
     return true;
-  } else {
-    if (e15_is_critical_frame_period(ep)) {
+  }
+  else
+  {
+    if (e15_is_critical_frame_period(ep))
+    {
       ep->pending = 1;
-    } else {
+    }
+    else
+    {
       hw_endpoint_start_next_buffer(ep);
     }
   }
@@ -355,14 +411,16 @@ bool __tusb_irq_path_func(hw_endpoint_xfer_continue)(struct hw_endpoint* ep) {
 volatile uint32_t e15_last_sof = 0;
 
 // check if Errata 15 is needed for this endpoint i.e device bulk-in
-static bool __tusb_irq_path_func(e15_is_bulkin_ep)(struct hw_endpoint* ep) {
+static bool __tusb_irq_path_func(e15_is_bulkin_ep)(struct hw_endpoint *ep)
+{
   return (!is_host_mode() && tu_edpt_dir(ep->ep_addr) == TUSB_DIR_IN &&
           ep->transfer_type == TUSB_XFER_BULK);
 }
 
 // check if we need to apply Errata 15 workaround : i.e
 // Endpoint is BULK IN and is currently in critical frame period i.e 20% of last usb frame
-static bool __tusb_irq_path_func(e15_is_critical_frame_period)(struct hw_endpoint* ep) {
+static bool __tusb_irq_path_func(e15_is_critical_frame_period)(struct hw_endpoint *ep)
+{
   TU_VERIFY(e15_is_bulkin_ep(ep));
 
   /* Avoid the last 200us (uframe 6.5-7) of a frame, up to the EOF2 point.
@@ -370,7 +428,8 @@ static bool __tusb_irq_path_func(e15_is_critical_frame_period)(struct hw_endpoin
    * when it is expecting an ACK.
    */
   uint32_t delta = time_us_32() - e15_last_sof;
-  if (delta < 800 || delta > 998) {
+  if (delta < 800 || delta > 998)
+  {
     return false;
   }
   TU_LOG(3, "Avoiding sof %lu now %lu last %lu\r\n", (usb_hw->sof_rd + 1) & USB_SOF_RD_BITS, time_us_32(),

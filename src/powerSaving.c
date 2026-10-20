@@ -4,6 +4,7 @@
 #include "hardware/structs/scb.h"
 #include "hardware/structs/rosc.h"
 #include "hardware/structs/syscfg.h"
+#include "usb_cdc_bridge.h"
 
 static void stopUnusedClocks(void)
 {
@@ -62,17 +63,34 @@ void pwr_initPowerSaving(void)
 
 void pwr_enableAfterBootPowerSaving(void)
 {
+    // DSpico: the PMDSky uplink runs a local TinyUSB stack on this chip
+    // (LOCAL_STACK sub-command). Gating clk_usb/USBCTRL off and powering
+    // down the USB DPRAM here — on EVERY game boot (0xFC disable-scramble
+    // command) — kills a live controller: the SIE loses its clock and the
+    // endpoint buffer-control/ep_ctrl registers lose their contents.
+    // Re-clocked later with lost state, the controller wedges: with D+ up
+    // the host's polling hits a dead pipe (replug's bus reset heals), and
+    // when a re-enumeration is required (DISCONNECT/CONNECT workaround)
+    // the wedged SIE never sees the post-CONNECT bus reset at all — the
+    // port never returns and only a power cycle fixes it. This is the
+    // upstream LNH "use USB, reset the console, use USB again -> crash"
+    // bug. While the local stack owns the controller, the USB power
+    // domain must stay untouched.
+    if (usb_cdc_local_stack_active())
+    {
+        return;
+    }
     hw_set_bits(&syscfg_hw->mempowerdown, SYSCFG_MEMPOWERDOWN_USB_BITS);
     hw_clear_bits(&clocks_hw->wake_en1,
-        CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
-        CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
+                  CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
+                      CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
 }
 
 void pwr_disableAfterBootPowerSaving(void)
 {
     hw_set_bits(&clocks_hw->wake_en1,
-        CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
-        CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
+                CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
+                    CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
     hw_clear_bits(&syscfg_hw->mempowerdown, SYSCFG_MEMPOWERDOWN_USB_BITS);
 }
 
@@ -81,19 +99,31 @@ void pwr_disableUsbPowerSaving(void)
     hw_set_bits(&clocks_hw->wake_en0, CLOCKS_WAKE_EN0_CLK_SYS_PLL_USB_BITS);
     hw_set_bits(&clocks_hw->sleep_en0, CLOCKS_SLEEP_EN0_CLK_SYS_PLL_USB_BITS);
     hw_set_bits(&clocks_hw->wake_en1,
-        CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
-        CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
+                CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
+                    CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
     hw_set_bits(&clocks_hw->sleep_en1,
-        CLOCKS_SLEEP_EN1_CLK_USB_USBCTRL_BITS |
-        CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS);
+                CLOCKS_SLEEP_EN1_CLK_USB_USBCTRL_BITS |
+                    CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS);
     hw_clear_bits(&syscfg_hw->mempowerdown, SYSCFG_MEMPOWERDOWN_USB_BITS);
-    pll_init(pll_usb, 1, 1200000000, 5, 5);
-    clock_configure(
-        clk_usb,
-        0,
-        CLOCKS_CLK_USB_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
-        48 * MHZ,
-        48 * MHZ);
+    // DSpico: only (re)init the PLL and clk_usb when they are not already
+    // up. pll_init() early-returns on a correctly-locked PLL anyway, but
+    // clock_configure() unconditionally STOPS clk_usb, re-muxes and
+    // re-enables it — a live glitch that a running USB controller must
+    // never observe (this runs from the card PIO IRQ on every LOCAL_STACK
+    // command, i.e. on every mod boot after a soft reset). A powered-down
+    // PLL (cold boot, or after pwr_enableUsbPowerSaving) still gets the
+    // full init.
+    if (!(pll_usb->cs & PLL_CS_LOCK_BITS) ||
+        !(clocks_hw->clk[clk_usb].ctrl & CLOCKS_CLK_USB_CTRL_ENABLE_BITS))
+    {
+        pll_init(pll_usb, 1, 1200000000, 5, 5);
+        clock_configure(
+            clk_usb,
+            0,
+            CLOCKS_CLK_USB_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
+            48 * MHZ,
+            48 * MHZ);
+    }
 }
 
 void pwr_enableUsbPowerSaving(void)
@@ -103,10 +133,10 @@ void pwr_enableUsbPowerSaving(void)
     hw_clear_bits(&clocks_hw->wake_en0, CLOCKS_WAKE_EN0_CLK_SYS_PLL_USB_BITS);
     hw_clear_bits(&clocks_hw->sleep_en0, CLOCKS_SLEEP_EN0_CLK_SYS_PLL_USB_BITS);
     hw_clear_bits(&clocks_hw->wake_en1,
-        CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
-        CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
+                  CLOCKS_WAKE_EN1_CLK_USB_USBCTRL_BITS |
+                      CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
     hw_clear_bits(&clocks_hw->sleep_en1,
-        CLOCKS_SLEEP_EN1_CLK_USB_USBCTRL_BITS |
-        CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS);
+                  CLOCKS_SLEEP_EN1_CLK_USB_USBCTRL_BITS |
+                      CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS);
     hw_set_bits(&syscfg_hw->mempowerdown, SYSCFG_MEMPOWERDOWN_USB_BITS);
 }

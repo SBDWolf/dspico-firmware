@@ -12,11 +12,16 @@ void ntrc_gameCmd1Unknown(ntr_rom_emu_t* romEmu, u32 word, pio_hw_t* pio)
     ntrc_noPayload(pio);
     ntrc_finishGameCmd1(romEmu, 0);
 
-    //do not receive further commands until card reset
-    irq_set_enabled(PIO0_IRQ_0, false);
-
-    puts("Unknown game command");
-    printf("%08X%08X\n", romEmu->cmd0, romEmu->cmd1);
+    // DSpico: self-heal instead of dying (see the twin handler in
+    // ntrCardRomGameNoScramble.c). Upstream disabled the card IRQ here
+    // until the next card reset; a PMDSky soft reset never toggles
+    // PIN_RST, so that permanently killed the card bus. The transaction
+    // is already completed cleanly — clear stale payload state, count
+    // the resync, keep the IRQ running. No UART prints in IRQ context.
+    romEmu->readDataDestination = 0;
+    romEmu->readDataLimit = 0;
+    romEmu->readDataCompleteHandler = 0;
+    gCardResyncCount++;
 }
 
 void __time_critical_func(ntrc_gameCmd0Dummy)(ntr_rom_emu_t* romEmu, u32 word, pio_hw_t* pio)
