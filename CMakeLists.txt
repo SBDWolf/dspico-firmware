@@ -9,10 +9,6 @@ add_compile_definitions(DSpico
   PICO_STACK_SIZE=0x600
   PICO_CORE1_STACK_SIZE=0x400
   ENABLE_R4_MODE
-  # RP2040-E15 bulk-IN errata workaround (vendored in src/tinyusb): SOF-gated
-  # IN buffer arming prevents the stuck-armed-buffer IN wedge. Also sets
-  # PICO_RP2040_USB_FAST_IRQ=1 (USB IRQ-path code moves to .time_critical RAM).
-  PICO_RP2040_USB_DEVICE_UFRAME_FIX=1
   #DSPICO_ENABLE_WRFUXXED # This macro enables the WRFUXXED exploit to work.
   # ENABLE_PREVENT_DSI_AUTOBOOT # meant to be used with WRFU, doesn't work properly on the 3ds
 )
@@ -102,12 +98,6 @@ endif()
 
 pico_generate_pio_header(DSpico ${CMAKE_CURRENT_LIST_DIR}/src/ntrCard.pio)
 pico_generate_pio_header(DSpico ${CMAKE_CURRENT_LIST_DIR}/src/sd/rp2040_sdio.pio)
-
-# DSpico: firmware-local linker script (src/memmap_dspico.ld) — the root
-# stack is relocated to main RAM top; keeps the vendored pico-sdk pristine.
-# The absolute path is required: the linker resolves --script= relative to
-# the build directory.
-pico_set_linker_script(DSpico ${CMAKE_CURRENT_LIST_DIR}/src/memmap_dspico.ld)
 
 pico_enable_stdio_uart(DSpico 1)
 pico_add_extra_outputs(DSpico)

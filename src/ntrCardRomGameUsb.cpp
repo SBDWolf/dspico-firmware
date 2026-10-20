@@ -1,6 +1,5 @@
 #include "common.h"
 #include "hardware/structs/usb.h"
-#include "hardware/dma.h"
 #include "tinyusb/dcd.h"
 #include "ntrCardRom.h"
 #include "ntrCardRomGameNoScramble.h"
@@ -17,21 +16,6 @@ extern "C" void dcd_edpt_close(uint8_t rhport, uint8_t ep_addr);
 
 static u8 sUsbDataBuffers[32][1024] alignas(4);
 static bool sUsbActive;
-
-// DSpico: clamp a raw endpoint byte from a card command to the valid
-// address space (endpoint number 0-15 + direction bit). The buffer row
-// index ((ep & ~0x80) * 2 + (ep >> 7)) and the DCD's hw_endpoints[16][2]
-// array both assume endpoint numbers below 16 — the RP2040 USB hardware
-// only HAS 16 endpoints — but the raw command byte is 8 bits wide. A
-// desynced card stream (soft reset cutting a transaction mid-flight)
-// can present garbage as a USB command; without this mask such a word
-// indexes up to 256 KB past the buffer array (firmware RAM corruption,
-// crashes) or past hw_endpoints. Masking keeps every legitimate endpoint
-// (0x00-0x0F, 0x80-0x8F) unchanged and folds anything else into range.
-static inline u32 usbSanitizeEpAddr(u32 raw)
-{
-    return raw & 0x8F;
-}
 
 extern "C" void __scratch_y("cpu0") ntrc_gameReqUsbCommandCmd1(ntr_rom_emu_t* romEmu, u32 word, pio_hw_t* pio)
 {
@@ -84,17 +68,17 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReqUsbCommandCmd1(ntr_rom_emu_t* ro
         }
         case USB_SUB_COMMAND_EP_STALL:
         {
-            dcd_edpt_stall(0, usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF));
+            dcd_edpt_stall(0, (romEmu->cmd0 >> 8) & 0xFF);
             break;
         }
         case USB_SUB_COMMAND_EP_CLEAR_STALL:
         {
-            dcd_edpt_clear_stall(0, usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF));
+            dcd_edpt_clear_stall(0, (romEmu->cmd0 >> 8) & 0xFF);
             break;
         }
         case USB_SUB_COMMAND_EP_CLOSE:
         {
-            dcd_edpt_close(0, usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF));
+            dcd_edpt_close(0, (romEmu->cmd0 >> 8) & 0xFF);
             break;
         }
         case USB_SUB_COMMAND_FINISH_SET_ADDRESS:
@@ -105,7 +89,7 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReqUsbCommandCmd1(ntr_rom_emu_t* ro
         case USB_SUB_COMMAND_EP_OPEN:
         {
             tusb_desc_endpoint_t endpoint;
-            endpoint.bEndpointAddress = usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF);
+            endpoint.bEndpointAddress = (romEmu->cmd0 >> 8) & 0xFF;
             endpoint.wMaxPacketSize = romEmu->cmd1 & 0x7FF;
             endpoint.bmAttributes.xfer = romEmu->cmd0 & 3;
             dcd_edpt_open(0, &endpoint);
@@ -130,7 +114,7 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReqUsbCommandCmd1(ntr_rom_emu_t* ro
             {
                 byteCount = 512;
             }
-            u32 endpoint = usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF);
+            u32 endpoint = (romEmu->cmd0 >> 8) & 0xFF;
             u32 offset = romEmu->cmd0 & 1;
             u8* buffer = &sUsbDataBuffers[(endpoint & ~0x80) * 2 + (endpoint >> 7)][offset * 512];
             dcd_edpt_xfer(0, endpoint, buffer, byteCount);
@@ -161,33 +145,6 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReqUsbCommandCmd1(ntr_rom_emu_t* ro
             usb_cdc_local_stack_stop();
             break;
         }
-        case USB_SUB_COMMAND_RESET_CARD_STATE:
-        {
-            // DSpico: a console soft reset cuts the in-flight card
-            // transaction wherever it was; PIN_RST never toggles, so
-            // resetNtrCard() never runs and the emulator carries stale
-            // state into the next session: an armed DMA channel 0 still
-            // holding the old transaction's 512 bytes (its data gets
-            // clocked out as the response to a LATER transaction =
-            // corrupted ROM reads) and gNtrRomEmu payload state
-            // (wordIdx >= 2, armed readData* handler = post-boot words
-            // consumed as stale payload). The mod sends this right after
-            // LOCAL_STACK on boot, while it holds the card lock (no
-            // transaction can be in flight), so aborting the DMA is safe.
-            // The PIO SM is deliberately NOT restarted: it self-recovers
-            // to the command-wait state once stale payload exhausts, and
-            // a restart would need the program offset from main.cpp.
-            // The scrambler ring pointers are static in no-scramble mode
-            // and must stay consistent with core1's ring writer.
-            dma_channel_abort(0);
-            gNtrRomEmu.wordIdx = 0;
-            gNtrRomEmu.readDataDestination = 0;
-            gNtrRomEmu.readDataLimit = 0;
-            gNtrRomEmu.readDataCompleteHandler = 0;
-            gNtrRomEmu.securePhase1 = false;
-            gNtrRomEmu.secureBlock = 0;
-            break;
-        }
     }
 }
 
@@ -195,7 +152,7 @@ extern "C" void __scratch_y("cpu0") ntrc_gameReadUsbDataCmd0(ntr_rom_emu_t* romE
 {
     ntrc_beginWrite(pio, 512);
     u32 bufferIndex = romEmu->cmd0 & 1;
-    u32 endpoint = usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF);
+    u32 endpoint = (romEmu->cmd0 >> 8) & 0xFF;
     u8* buffer = &sUsbDataBuffers[(endpoint & ~0x80) * 2 + (endpoint >> 7)][bufferIndex * 512];
     if (usb_cdc_local_stack_active())
     {
@@ -229,7 +186,7 @@ static void __scratch_y("cpu0") usbWritePayloadComplete(ntr_rom_emu_t* romEmu)
     if (romEmu->cmd0 & 1)
     {
         u32 bufferIndex = (romEmu->cmd0 >> 16) & 1;
-        u32 endpoint = usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF);
+        u32 endpoint = (romEmu->cmd0 >> 8) & 0xFF;
         u8* buffer = &sUsbDataBuffers[(endpoint & ~0x80) * 2 + (endpoint >> 7)][bufferIndex * 512];
         u32 byteCount = romEmu->cmd1;
         if (byteCount > 512)
@@ -252,7 +209,7 @@ static void __scratch_y("cpu0") usbWritePayloadComplete(ntr_rom_emu_t* romEmu)
 extern "C" void __scratch_y("cpu0") ntrc_gameWriteUsbDataCmd1(ntr_rom_emu_t* romEmu, u32 word, pio_hw_t* pio)
 {
     u32 bufferIndex = (romEmu->cmd0 >> 16) & 1;
-    u32 endpoint = usbSanitizeEpAddr((romEmu->cmd0 >> 8) & 0xFF);
+    u32 endpoint = (romEmu->cmd0 >> 8) & 0xFF;
     u8* buffer = &sUsbDataBuffers[(endpoint & ~0x80) * 2 + (endpoint >> 7)][bufferIndex * 512];
     if ((romEmu->cmd0 & 1) && word == 0)
     {
